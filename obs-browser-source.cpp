@@ -148,6 +148,12 @@ void BrowserSource::Destroy()
 	}
 	*p_prev_next = next;
 
+	// No creation task can have been accepted before context readiness.
+	// There is no CEF browser to close on its UI thread in this case.
+	if (!cef_started_event || os_event_try(cef_started_event) != 0) {
+		delete this;
+		return;
+	}
 	QueueCEFTask([this]() { delete this; });
 }
 
@@ -239,7 +245,8 @@ bool BrowserSource::CreateBrowser()
 		cefBrowserSettings.default_fixed_font_size = 16;
 
 		auto browser = CefBrowserHost::CreateBrowserSync(windowInfo, browserClient, url, cefBrowserSettings,
-								 CefRefPtr<CefDictionaryValue>(), nullptr);
+								 CefRefPtr<CefDictionaryValue>(),
+								 CefRequestContext::GetGlobalContext());
 
 		SetBrowser(browser);
 

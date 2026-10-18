@@ -71,6 +71,8 @@ using namespace std;
 static thread manager_thread;
 static bool manager_initialized = false;
 os_event_t *cef_started_event = nullptr;
+static os_event_t *cef_initialized_event = nullptr;
+static bool browser_initialized = false;
 
 #if defined(_WIN32)
 static int adapterCount = 0;
@@ -108,6 +110,10 @@ public:
 
 bool QueueCEFTask(std::function<void()> task)
 {
+	if (!cef_started_event || os_event_try(cef_started_event) != 0) {
+		return false;
+	}
+
 	return CefPostTask(TID_UI, CefRefPtr<BrowserTask>(new BrowserTask(task)));
 }
 
@@ -269,7 +275,7 @@ static obs_missing_files_t *browser_source_missingfiles(void *data)
 
 static CefRefPtr<BrowserApp> app;
 
-static void BrowserInit(void)
+static bool BrowserInit(void)
 {
 	string path = obs_get_module_binary_path(obs_current_module());
 	path = path.substr(0, path.find_last_of('/') + 1);
@@ -374,6 +380,12 @@ static void BrowserInit(void)
 	app = new BrowserApp(tex_sharing_avail, obs_get_nix_platform() == OBS_NIX_PLATFORM_WAYLAND);
 #endif
 
+	app->SetContextInitializedCallback([] {
+		// The global request context is ready when this callback runs.
+		CefRegisterSchemeHandlerFactory("http", "absolute", new BrowserSchemeHandlerFactory());
+		os_event_signal(cef_started_event);
+	});
+
 #ifdef _WIN32
 	CefExecuteProcess(args, app, nullptr);
 #endif
@@ -392,13 +404,10 @@ static void BrowserInit(void)
 #else
 		blog(LOG_ERROR, "[obs-browser]: CEF failed to initialize.");
 #endif
-		return;
+		app = nullptr;
+		return false;
 	}
-
-	// Register custom scheme handler for local browser sources
-	CefRegisterSchemeHandlerFactory("http", "absolute", new BrowserSchemeHandlerFactory());
-
-	os_event_signal(cef_started_event);
+	return true;
 }
 
 static void BrowserShutdown(void)
@@ -417,9 +426,12 @@ static void BrowserShutdown(void)
 #ifndef ENABLE_BROWSER_QT_LOOP
 static void BrowserManagerThread(void)
 {
-	BrowserInit();
-	CefRunMessageLoop();
-	BrowserShutdown();
+	browser_initialized = BrowserInit();
+	os_event_signal(cef_initialized_event);
+	if (browser_initialized) {
+		CefRunMessageLoop();
+		BrowserShutdown();
+	}
 }
 #endif
 
@@ -427,7 +439,7 @@ extern "C" EXPORT void obs_browser_initialize(void)
 {
 	if (!os_atomic_set_bool(&manager_initialized, true)) {
 #ifdef ENABLE_BROWSER_QT_LOOP
-		BrowserInit();
+		browser_initialized = BrowserInit();
 #else
 		manager_thread = thread(BrowserManagerThread);
 #endif
@@ -852,6 +864,7 @@ bool obs_module_load(void)
 #endif
 
 	os_event_init(&cef_started_event, OS_EVENT_TYPE_MANUAL);
+	os_event_init(&cef_initialized_event, OS_EVENT_TYPE_MANUAL);
 
 #if defined(_WIN32) && CHROME_VERSION_BUILD < 5615
 	/* CefEnableHighDPISupport doesn't do anything on OS other than Windows. Would also crash macOS at this point as CEF is not directly linked */
@@ -915,10 +928,16 @@ void obs_module_post_load(void)
 void obs_module_unload(void)
 {
 #ifdef ENABLE_BROWSER_QT_LOOP
-	BrowserShutdown();
+	if (browser_initialized) {
+		BrowserShutdown();
+	}
 #else
 	if (manager_thread.joinable()) {
-		if (!QueueCEFTask([]() { CefQuitMessageLoop(); })) {
+		// Initialization can finish before the context-ready callback runs.
+		// Wait for success or failure before using the CEF API; the quit task
+		// must also be accepted while the context is still starting.
+		os_event_wait(cef_initialized_event);
+		if (browser_initialized && !CefPostTask(TID_UI, new BrowserTask([]() { CefQuitMessageLoop(); }))) {
 			blog(LOG_DEBUG, "[obs-browser]: Failed to post CefQuit task to loop");
 		}
 
@@ -927,4 +946,9 @@ void obs_module_unload(void)
 #endif
 
 	os_event_destroy(cef_started_event);
+	os_event_destroy(cef_initialized_event);
+	cef_started_event = nullptr;
+	cef_initialized_event = nullptr;
+	browser_initialized = false;
+	manager_initialized = false;
 }

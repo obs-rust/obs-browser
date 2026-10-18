@@ -69,6 +69,7 @@ class BrowserApp : public CefApp, public CefRenderProcessHandler, public CefBrow
 	bool shared_texture_available;
 	CallbackMap callbackMap;
 	int callbackId;
+	std::function<void()> on_context_initialized;
 #if !defined(__APPLE__) && !defined(_WIN32)
 	bool wayland;
 #endif
@@ -83,6 +84,8 @@ public:
 #endif
 	{
 	}
+
+	void SetContextInitializedCallback(std::function<void()> callback) { on_context_initialized.swap(callback); }
 
 	virtual CefRefPtr<CefRenderProcessHandler> GetRenderProcessHandler() override;
 	virtual CefRefPtr<CefBrowserProcessHandler> GetBrowserProcessHandler() override;
