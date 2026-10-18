@@ -18,7 +18,7 @@ int main(int argc, char **argv)
 	if (obs_open_module(&module, argv[1], argv[2]) != MODULE_SUCCESS || !obs_init_module(module))
 		return 4;
 	if (strcmp(argv[4], "source") == 0) {
-		obs_source_t *source = obs_source_create("browser_source", "Early browser", NULL, NULL);
+		obs_source_t *source = obs_source_create_private("browser_source", "Early browser", NULL);
 		if (!source)
 			return 5;
 		obs_source_release(source);
