@@ -35,3 +35,26 @@ Each output directory must be fresh; logs and profiles are retained. This
 covers real successful initialization concurrent with unload. It does not
 inject a CEF initialization failure or prove absence of leaks, and it does not
 replace full frontend/rendering tests.
+
+## Real initialization failure
+
+After compiling the lifecycle harness above, run the Linux CEF singleton case:
+
+```sh
+uv run --no-project python tests/initialization_failure.py \
+  --executable /path/to/output/startup-shutdown \
+  --module /path/to/staged/obs-browser.so --data /path/to/obs-browser/data \
+  --output-dir /path/to/new-failure-output
+```
+
+It holds a fresh CEF profile in one real module process, then starts another
+against that locked profile. It requires CEF itself to report initialization
+failure and the second process to complete OBS shutdown. It releases the holder
+through stdin and bounds both process lifetimes. No CEF API is stubbed. Basic
+password storage is selected only for these fresh disposable test profiles.
+
+This case requires a Chrome-runtime CEF profile singleton (validated with CEF
+7871). The second process waits for the initialization-failure log before stdin
+releases shutdown, separating this path from the pre-initialization task race.
+It passes against both the original and fixed modules: this is characterization
+coverage for preserved failure behavior, not an additional unique RED case.

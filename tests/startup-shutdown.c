@@ -7,8 +7,8 @@
 
 int main(int argc, char **argv)
 {
-	if (argc != 5) {
-		fprintf(stderr, "usage: %s MODULE DATA CONFIG initialize|source\n", argv[0]);
+	if (argc < 5) {
+		fprintf(stderr, "usage: %s MODULE DATA CONFIG initialize|source|hold [CEF flags]\n", argv[0]);
 		return 2;
 	}
 	obs_set_cmdline_args(argc, (const char *const *)argv);
@@ -27,6 +27,11 @@ int main(int argc, char **argv)
 		if (!initialize)
 			return 6;
 		initialize();
+	}
+	if (strcmp(argv[4], "hold") == 0) {
+		puts("holding browser startup until stdin is released");
+		fflush(stdout);
+		getchar();
 	}
 	obs_shutdown();
 	puts("browser startup and immediate shutdown completed");
