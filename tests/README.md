@@ -58,3 +58,15 @@ This case requires a Chrome-runtime CEF profile singleton (validated with CEF
 releases shutdown, separating this path from the pre-initialization task race.
 It passes against both the original and fixed modules: this is characterization
 coverage for preserved failure behavior, not an additional unique RED case.
+
+## Sandbox decision
+
+`sandbox_decision.py` compiles `browser-sandbox.cpp` with
+`sandbox-decision.cpp` and runs every case of the decision whether the CEF
+sandbox can work (obs-rust/obs-studio#1092): root, user namespaces, and the
+state of the `chrome-sandbox` helper. The decision is a pure function, so the
+test needs no CEF, no libobs and no display, and runs on any platform:
+
+```sh
+uv run --no-project python tests/sandbox_decision.py --output-dir /path/to/new-output
+```
