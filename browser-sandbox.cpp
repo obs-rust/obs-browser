@@ -17,9 +17,33 @@
 
 #include "browser-sandbox.hpp"
 
-SandboxDecision DecideSandbox(const SandboxProbe &)
+SandboxDecision DecideSandbox(const SandboxProbe &probe)
 {
-	return {SandboxMode::Off, "not implemented"};
+	if (!probe.supported) {
+		return {SandboxMode::Off, "no sandbox probe on this platform"};
+	}
+
+	/* Chromium does not run sandboxed as root: it exits the process. */
+	if (probe.root) {
+		return {SandboxMode::Off, "OBS runs as root"};
+	}
+
+	/* Chromium prefers the namespace sandbox and then ignores the helper. */
+	if (probe.user_namespaces) {
+		return {SandboxMode::Namespaces, "user namespaces are available"};
+	}
+
+	switch (probe.helper) {
+	case SandboxHelper::SetuidRoot:
+		return {SandboxMode::SetuidHelper, "no user namespaces; chrome-sandbox is setuid root"};
+	case SandboxHelper::NotSetuid:
+		/* Chromium aborts on a helper it cannot use, instead of
+		 * running without the sandbox. */
+		return {SandboxMode::Off, "no user namespaces, and chrome-sandbox is not setuid root"};
+	case SandboxHelper::Absent:
+		break;
+	}
+	return {SandboxMode::Off, "no user namespaces and no chrome-sandbox"};
 }
 
 SandboxProbe ProbeSandbox(const std::string &)
