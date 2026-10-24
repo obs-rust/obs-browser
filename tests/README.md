@@ -58,3 +58,33 @@ This case requires a Chrome-runtime CEF profile singleton (validated with CEF
 releases shutdown, separating this path from the pre-initialization task race.
 It passes against both the original and fixed modules: this is characterization
 coverage for preserved failure behavior, not an additional unique RED case.
+
+## Sandbox decision
+
+`sandbox_decision.py` compiles `browser-sandbox.cpp` with
+`sandbox-decision.cpp` and runs every case of the decision whether the CEF
+sandbox can work (obs-rust/obs-studio#1092): root, user namespaces, and the
+state of the `chrome-sandbox` helper. The decision is a pure function, so the
+test needs no CEF, no libobs and no display, and runs on any platform:
+
+```sh
+uv run --no-project python tests/sandbox_decision.py --output-dir /path/to/new-output
+```
+
+## Sandbox probe
+
+`sandbox_probe.py` compiles `browser-sandbox.cpp` with `sandbox-probe.cpp` and
+prints what `ProbeSandbox` finds in this environment and the decision. Run it
+as the user and in the setup to check; a command prefix after `--` runs the
+probe through it:
+
+```sh
+uv run --no-project python tests/sandbox_probe.py --output-dir /tmp/out --cef-dir /path/to/cef/dir \
+  -- systemd-run --pipe --wait --quiet -p User=someone -p RestrictNamespaces=~user --
+```
+
+Linux x86_64 (Debian 13 LXC container, kernel 7.0.14, CEF 7871
+`chrome-sandbox`): as root, off for every helper state; as a normal user, the
+namespace sandbox for every helper state; as a normal user with
+`RestrictNamespaces=~user`, off without a helper or with a helper that is not
+setuid, and the setuid helper with a helper that is setuid root.

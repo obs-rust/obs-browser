@@ -33,6 +33,7 @@
 #include "obs-browser-source.hpp"
 #include "browser-scheme.hpp"
 #include "browser-app.hpp"
+#include "browser-sandbox.hpp"
 #include "browser-version.h"
 
 #include "cef-headers.hpp"
@@ -57,6 +58,7 @@
 
 #if !defined(_WIN32) && !defined(__APPLE__)
 #include "drm-format.hpp"
+#include <dlfcn.h>
 #endif
 
 OBS_DECLARE_MODULE()
@@ -289,6 +291,32 @@ static obs_missing_files_t *browser_source_missingfiles(void *data)
 
 static CefRefPtr<BrowserApp> app;
 
+/* The CEF sandbox only where it can work (obs-rust/obs-studio#1092);
+ * otherwise as before, with the reason in the log. When a probe says it
+ * cannot work, the reason is an error line, which also goes to stderr. */
+static bool UseCefSandbox(void)
+{
+	std::string cef_dir;
+#if !defined(_WIN32) && !defined(__APPLE__)
+	Dl_info info;
+	if (dladdr(reinterpret_cast<void *>(&cef_version_info), &info) && info.dli_fname) {
+		cef_dir = info.dli_fname;
+		cef_dir = cef_dir.substr(0, cef_dir.find_last_of('/'));
+	}
+#endif
+	SandboxProbe probe = ProbeSandbox(cef_dir);
+	SandboxDecision decision = DecideSandbox(probe);
+	if (SandboxFallback(probe, decision)) {
+		/* LOG_ERROR: OBS echoes it to stderr; the browser continues. */
+		blog(LOG_ERROR, "[obs-browser]: CEF sandbox off: %s. Browser sources run without the sandbox.",
+		     decision.reason);
+	} else {
+		blog(LOG_INFO, "[obs-browser]: CEF sandbox %s: %s", decision.mode == SandboxMode::Off ? "off" : "on",
+		     decision.reason);
+	}
+	return decision.mode != SandboxMode::Off;
+}
+
 static bool BrowserInit(void)
 {
 	string path = obs_get_module_binary_path(obs_current_module());
@@ -313,7 +341,7 @@ static bool BrowserInit(void)
 	BPtr<char> log_path_abs = os_get_abs_path_ptr(log_path);
 	CefString(&settings.log_file) = log_path_abs;
 	settings.windowless_rendering_enabled = true;
-	settings.no_sandbox = true;
+	settings.no_sandbox = !UseCefSandbox();
 #if CHROME_VERSION_BUILD > 6533 && CHROME_VERSION_BUILD <= 6613
 	settings.chrome_runtime = true;
 #endif
