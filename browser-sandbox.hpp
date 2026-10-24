@@ -52,5 +52,11 @@ struct SandboxDecision {
 /* Pure: the same probe gives the same decision. */
 SandboxDecision DecideSandbox(const SandboxProbe &probe);
 
+/* The fallback (B in obs-rust/obs-studio#1092): a probe says the sandbox
+ * cannot work, so the browser runs without it, and the user is warned.
+ * Without a probe (Windows, macOS for now) the sandbox is off as before,
+ * and only the log says so. */
+bool SandboxFallback(const SandboxProbe &probe, const SandboxDecision &decision);
+
 /* cef_dir: the directory of libcef (and of chrome-sandbox). */
 SandboxProbe ProbeSandbox(const std::string &cef_dir);

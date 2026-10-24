@@ -58,6 +58,11 @@ SandboxDecision DecideSandbox(const SandboxProbe &probe)
 	return {SandboxMode::Off, "no user namespaces and no chrome-sandbox"};
 }
 
+bool SandboxFallback(const SandboxProbe &, const SandboxDecision &)
+{
+	return false;
+}
+
 #ifdef __linux__
 namespace {
 

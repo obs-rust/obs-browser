@@ -21,6 +21,17 @@ void Expect(const char *name, const SandboxProbe &probe, SandboxMode mode, const
 	}
 }
 
+void ExpectFallback(const char *name, const SandboxProbe &probe, bool fallback)
+{
+	bool got = SandboxFallback(probe, DecideSandbox(probe));
+	if (got != fallback) {
+		std::fprintf(stderr, "FAIL fallback %s: %d (expected %d)\n", name, got, fallback);
+		failures++;
+	} else {
+		std::printf("ok   fallback %s\n", name);
+	}
+}
+
 SandboxProbe Probe(bool root, bool user_namespaces, SandboxHelper helper)
 {
 	SandboxProbe probe;
@@ -58,6 +69,14 @@ int main()
 	       SandboxMode::Off, "not setuid");
 	Expect("user, no namespaces, no helper", Probe(false, false, SandboxHelper::Absent), SandboxMode::Off,
 	       "no user namespaces");
+
+	/* The fallback warns only where a probe said the sandbox cannot work. */
+	ExpectFallback("unsupported platform", SandboxProbe{}, false);
+	ExpectFallback("root", Probe(true, true, SandboxHelper::Absent), true);
+	ExpectFallback("user, namespaces", Probe(false, true, SandboxHelper::Absent), false);
+	ExpectFallback("user, no namespaces, setuid helper", Probe(false, false, SandboxHelper::SetuidRoot), false);
+	ExpectFallback("user, no namespaces, helper not setuid", Probe(false, false, SandboxHelper::NotSetuid), true);
+	ExpectFallback("user, no namespaces, no helper", Probe(false, false, SandboxHelper::Absent), true);
 
 	if (failures) {
 		std::fprintf(stderr, "%d case(s) failed\n", failures);
