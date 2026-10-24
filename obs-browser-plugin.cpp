@@ -278,7 +278,8 @@ static obs_missing_files_t *browser_source_missingfiles(void *data)
 static CefRefPtr<BrowserApp> app;
 
 /* The CEF sandbox only where it can work (obs-rust/obs-studio#1092);
- * otherwise as before, with the reason in the log. */
+ * otherwise as before, with the reason in the log. When a probe says it
+ * cannot work, the reason is an error line, which also goes to stderr. */
 static bool UseCefSandbox(void)
 {
 	std::string cef_dir;
@@ -289,9 +290,16 @@ static bool UseCefSandbox(void)
 		cef_dir = cef_dir.substr(0, cef_dir.find_last_of('/'));
 	}
 #endif
-	SandboxDecision decision = DecideSandbox(ProbeSandbox(cef_dir));
-	blog(LOG_INFO, "[obs-browser]: CEF sandbox %s: %s", decision.mode == SandboxMode::Off ? "off" : "on",
-	     decision.reason);
+	SandboxProbe probe = ProbeSandbox(cef_dir);
+	SandboxDecision decision = DecideSandbox(probe);
+	if (SandboxFallback(probe, decision)) {
+		/* LOG_ERROR: OBS echoes it to stderr; the browser continues. */
+		blog(LOG_ERROR, "[obs-browser]: CEF sandbox off: %s. Browser sources run without the sandbox.",
+		     decision.reason);
+	} else {
+		blog(LOG_INFO, "[obs-browser]: CEF sandbox %s: %s", decision.mode == SandboxMode::Off ? "off" : "on",
+		     decision.reason);
+	}
 	return decision.mode != SandboxMode::Off;
 }
 
