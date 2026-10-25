@@ -19,16 +19,36 @@
 
 #include <QCoreApplication>
 #include <QMetaObject>
+#include <QObject>
 #include <QThread>
 
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <functional>
+#include <memory>
+#include <mutex>
 
 /* Runs func on the Qt main thread and waits for it: directly on the main
  * thread or without a Qt application, else through the main loop
- * (obs-rust/obs-studio#2387). Returns whether func ran. */
+ * (obs-rust/obs-studio#2387). Once the main loop has stopped (OBS quits),
+ * nothing would run it there, so it returns false without running instead
+ * of waiting forever (obs-rust/obs-studio#2391). Returns whether func ran. */
 
-/* Call once on the main thread while the application exists. */
-inline void WatchQtMainLoop() {}
+inline std::atomic<bool> &QtMainLoopStopped()
+{
+	static std::atomic<bool> stopped{false};
+	return stopped;
+}
+
+/* Call once on the main thread while the application exists (module load):
+ * Qt emits aboutToQuit when the main loop is about to stop. */
+inline void WatchQtMainLoop()
+{
+	if (QCoreApplication *qt = QCoreApplication::instance()) {
+		QObject::connect(qt, &QCoreApplication::aboutToQuit, [] { QtMainLoopStopped() = true; });
+	}
+}
 
 inline bool RunOnQtMainThread(const std::function<void()> &func)
 {
@@ -37,6 +57,46 @@ inline bool RunOnQtMainThread(const std::function<void()> &func)
 		func();
 		return true;
 	}
-	QMetaObject::invokeMethod(qt, func, Qt::BlockingQueuedConnection);
+	auto stopped = [] {
+		return QtMainLoopStopped().load() || QCoreApplication::closingDown();
+	};
+	if (stopped()) {
+		return false;
+	}
+
+	struct Handover {
+		std::mutex mutex;
+		std::condition_variable done_cv;
+		enum class State { Queued, Running, Done, Cancelled } state = State::Queued;
+	};
+	auto handover = std::make_shared<Handover>();
+	QMetaObject::invokeMethod(
+		qt,
+		[handover, func] {
+			{
+				std::lock_guard<std::mutex> lock(handover->mutex);
+				if (handover->state == Handover::State::Cancelled) {
+					return;
+				}
+				handover->state = Handover::State::Running;
+			}
+			func();
+			{
+				std::lock_guard<std::mutex> lock(handover->mutex);
+				handover->state = Handover::State::Done;
+			}
+			handover->done_cv.notify_all();
+		},
+		Qt::QueuedConnection);
+
+	/* Wait, but give up if the loop stops before func has started. */
+	std::unique_lock<std::mutex> lock(handover->mutex);
+	while (handover->state != Handover::State::Done) {
+		if (handover->state == Handover::State::Queued && stopped()) {
+			handover->state = Handover::State::Cancelled;
+			return false;
+		}
+		handover->done_cv.wait_for(lock, std::chrono::milliseconds(50));
+	}
 	return true;
 }
