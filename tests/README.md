@@ -145,3 +145,25 @@ cores the bursts may not stall the capture at all, and the test then passes
 on any build. Check that the output shows late packets (`arrival after the
 timestamp ... max` on a build without the fix, `late audio dropped` with it),
 or raise `--burners`.
+
+## First browser source off the main thread (macOS)
+
+`first_source_off_main_thread.py` starts a built `OBS-Studio-Rust.app` with a
+fresh, seeded configuration and obs-websocket on a test port, and requires a
+browser source showing `first-source.html` (a page that turns its background
+green) to render (obs-rust/obs-studio#2387). On macOS obs-browser runs CEF on
+Qt's main loop, and the first browser source initializes CEF. Scenarios:
+`websocket-first` (obs-websocket creates the first source, from its IO
+thread) and `collection` (the scene collection has it, so OBS creates it on
+the main thread while it loads; the control):
+
+```sh
+uv run tests/first_source_off_main_thread.py \
+  --app /path/to/build_macos/frontend/RelWithDebInfo/OBS-Studio-Rust.app \
+  --output-dir /path/to/new-output [--scenario websocket-first ...]
+```
+
+The app keeps its configuration in `~/Library/Application Support/obs-studio-rust`.
+The test refuses to run when that folder exists, and moves the folder it made
+into the output directory afterwards. macOS only; it needs the real app with
+CEF, so CI does not run it.
