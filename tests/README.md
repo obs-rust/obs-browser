@@ -64,8 +64,11 @@ coverage for preserved failure behavior, not an additional unique RED case.
 `sandbox_decision.py` compiles `browser-sandbox.cpp` with
 `sandbox-decision.cpp` and runs every case of the decision whether the CEF
 sandbox can work (obs-rust/obs-studio#1092): root, user namespaces, and the
-state of the `chrome-sandbox` helper. The decision is a pure function, so the
-test needs no CEF, no libobs and no display, and runs on any platform:
+state of the `chrome-sandbox` helper. It also checks the fallback warning
+(obs-rust/obs-studio#2218): only the fallback warns, with the message for its
+cause, and both locale keys exist in `data/locale/en-US.ini`. The decision is
+a pure function, so the test needs no CEF, no libobs and no display, and runs
+on any platform:
 
 ```sh
 uv run --no-project python tests/sandbox_decision.py --output-dir /path/to/new-output

@@ -293,7 +293,8 @@ static CefRefPtr<BrowserApp> app;
 
 /* The CEF sandbox only where it can work (obs-rust/obs-studio#1092);
  * otherwise as before, with the reason in the log. When a probe says it
- * cannot work, the reason is an error line, which also goes to stderr. */
+ * cannot work, the shared fallback warning (obs-rust/obs-studio#2218) logs
+ * an error line, which also goes to stderr, and warns the user. */
 static bool UseCefSandbox(void)
 {
 	std::string cef_dir;
@@ -306,10 +307,12 @@ static bool UseCefSandbox(void)
 #endif
 	SandboxProbe probe = ProbeSandbox(cef_dir);
 	SandboxDecision decision = DecideSandbox(probe);
-	if (SandboxFallback(probe, decision)) {
-		/* LOG_ERROR: OBS echoes it to stderr; the browser continues. */
-		blog(LOG_ERROR, "[obs-browser]: CEF sandbox off: %s. Browser sources run without the sandbox.",
-		     decision.reason);
+	SandboxWarning warning;
+	if (SandboxWarningFor(probe, decision, &warning)) {
+		/* Logs now; the dialog shows once the main window has loaded. The
+		 * browser continues either way, so no callback. */
+		obs_frontend_warn_fallback(warning.id, obs_module_text(warning.title_key),
+					   obs_module_text(warning.message_key), warning.can_cancel, nullptr, nullptr);
 	} else {
 		blog(LOG_INFO, "[obs-browser]: CEF sandbox %s: %s", decision.mode == SandboxMode::Off ? "off" : "on",
 		     decision.reason);
