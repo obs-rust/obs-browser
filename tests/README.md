@@ -167,3 +167,20 @@ The app keeps its configuration in `~/Library/Application Support/obs-studio-rus
 The test refuses to run when that folder exists, and moves the folder it made
 into the output directory afterwards. macOS only; it needs the real app with
 CEF, so CI does not run it.
+
+## Hand-over to the Qt main thread
+
+`qt_main_thread.py` compiles `qt-main-thread.cpp` with
+`browser-qt-main-thread.hpp` against Qt Core and checks
+`RunOnQtMainThread()` (obs-rust/obs-studio#2391): while Qt's main loop runs,
+a worker thread's call runs on the main thread; once the loop has finished,
+the call returns at once without running, so a first browser source created
+off the main thread while OBS quits cannot hang it. It needs no CEF and no
+display:
+
+```sh
+uv run --no-project python tests/qt_main_thread.py --output-dir /path/to/new-output \
+  [--qt-lib-dir /path/to/lib-with-QtCore.framework]   # macOS
+```
+
+On Linux it finds Qt Core through `pkg-config Qt6Core`.
