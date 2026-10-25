@@ -29,6 +29,7 @@ target_sources(
     browser-dummy-client.hpp
     browser-sandbox.cpp
     browser-sandbox.hpp
+    browser-qt-main-thread.hpp
     browser-scheme.cpp
     browser-scheme.hpp
     browser-version.h

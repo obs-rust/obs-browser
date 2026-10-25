@@ -54,6 +54,7 @@
 #ifdef ENABLE_BROWSER_QT_LOOP
 #include <QApplication>
 #include <QThread>
+#include "browser-qt-main-thread.hpp"
 #endif
 
 #if !defined(_WIN32) && !defined(__APPLE__)
@@ -488,14 +489,10 @@ extern "C" EXPORT void obs_browser_initialize(void)
 		 * calling thread CEF's UI thread. The first browser source can be
 		 * created off the main thread (obs-websocket's CreateInput), and
 		 * then no browser would ever render (obs-rust/obs-studio#2387):
-		 * initialize on the main thread, and wait for it. Without a Qt
-		 * application there is no main loop to hand it to. */
-		QCoreApplication *qt = QCoreApplication::instance();
-		if (!qt || QThread::currentThread() == qt->thread()) {
-			browser_initialized = BrowserInit();
-		} else {
-			QMetaObject::invokeMethod(
-				qt, [] { browser_initialized = BrowserInit(); }, Qt::BlockingQueuedConnection);
+		 * initialize on the main thread, and wait for it. If it cannot run
+		 * there (OBS is quitting), CEF stays uninitialized. */
+		if (!RunOnQtMainThread([] { browser_initialized = BrowserInit(); })) {
+			browser_initialized = false;
 		}
 #else
 		manager_thread = thread(BrowserManagerThread);
@@ -917,6 +914,7 @@ bool obs_module_load(void)
 #endif
 #ifdef ENABLE_BROWSER_QT_LOOP
 	qRegisterMetaType<MessageTask>("MessageTask");
+	WatchQtMainLoop();
 #endif
 
 	if (os_event_init(&cef_started_event, OS_EVENT_TYPE_MANUAL) != 0 ||
