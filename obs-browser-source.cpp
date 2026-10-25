@@ -169,7 +169,10 @@ void BrowserSource::ExecuteOnBrowser(BrowserFunc func, bool async)
 		}
 #endif
 		os_event_t *finishedEvent;
-		os_event_init(&finishedEvent, OS_EVENT_TYPE_AUTO);
+		if (os_event_init(&finishedEvent, OS_EVENT_TYPE_AUTO) != 0) {
+			blog(LOG_ERROR, "[obs-browser]: Failed to create browser task event");
+			return;
+		}
 		bool success = QueueCEFTask([&]() {
 			if (!!cefBrowser) {
 				func(cefBrowser);
