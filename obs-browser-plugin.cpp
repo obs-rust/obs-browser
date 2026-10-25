@@ -484,7 +484,19 @@ extern "C" EXPORT void obs_browser_initialize(void)
 {
 	if (!os_atomic_set_bool(&manager_initialized, true)) {
 #ifdef ENABLE_BROWSER_QT_LOOP
-		browser_initialized = BrowserInit();
+		/* CEF runs on Qt's main loop here, and CefInitialize() makes the
+		 * calling thread CEF's UI thread. The first browser source can be
+		 * created off the main thread (obs-websocket's CreateInput), and
+		 * then no browser would ever render (obs-rust/obs-studio#2387):
+		 * initialize on the main thread, and wait for it. Without a Qt
+		 * application there is no main loop to hand it to. */
+		QCoreApplication *qt = QCoreApplication::instance();
+		if (!qt || QThread::currentThread() == qt->thread()) {
+			browser_initialized = BrowserInit();
+		} else {
+			QMetaObject::invokeMethod(
+				qt, [] { browser_initialized = BrowserInit(); }, Qt::BlockingQueuedConnection);
+		}
 #else
 		manager_thread = thread(BrowserManagerThread);
 #endif
