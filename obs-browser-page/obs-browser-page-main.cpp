@@ -19,6 +19,8 @@
 #include "cef-headers.hpp"
 #include "browser-app.hpp"
 
+#include <cstring>
+
 #ifdef _WIN32
 #include <windows.h>
 #include <string>
@@ -109,6 +111,16 @@ NO_STACK_PROTECTOR
 int main(int argc, char *argv[])
 {
 #if defined(__APPLE__) && !defined(ENABLE_BROWSER_LEGACY)
+	/* The CEF sandbox (obs-rust/obs-studio#1092): unless OBS turned it off
+	 * (--no-sandbox), sandbox this helper before the framework loads. */
+	bool no_sandbox = false;
+	for (int i = 1; i < argc; i++) {
+		no_sandbox = no_sandbox || strcmp(argv[i], "--no-sandbox") == 0;
+	}
+	CefScopedSandboxContext sandbox_context;
+	if (!no_sandbox && !sandbox_context.Initialize(argc, argv)) {
+		return 1;
+	}
 	CefScopedLibraryLoader library_loader;
 	if (!library_loader.LoadInHelper()) {
 		return 1;

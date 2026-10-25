@@ -67,6 +67,15 @@ void ExpectWarning(const char *name, const SandboxProbe &probe, const char *mess
 	}
 }
 
+SandboxProbe MacProbe(bool sandbox_library)
+{
+	SandboxProbe probe;
+	probe.supported = true;
+	probe.macos = true;
+	probe.sandbox_library = sandbox_library;
+	return probe;
+}
+
 SandboxProbe Probe(bool root, bool user_namespaces, SandboxHelper helper)
 {
 	SandboxProbe probe;
@@ -117,6 +126,15 @@ int main(int argc, char **argv)
 	ExpectFallback("user, no namespaces, setuid helper", Probe(false, false, SandboxHelper::SetuidRoot), false);
 	ExpectFallback("user, no namespaces, helper not setuid", Probe(false, false, SandboxHelper::NotSetuid), true);
 	ExpectFallback("user, no namespaces, no helper", Probe(false, false, SandboxHelper::Absent), true);
+
+	/* macOS (obs-rust/obs-studio#1092): the helpers sandbox themselves when the
+	 * framework has libcef_sandbox.dylib; without it a sandboxed helper exits. */
+	Expect("macOS, sandbox library", MacProbe(true), SandboxMode::Seatbelt, "libcef_sandbox.dylib");
+	Expect("macOS, no sandbox library", MacProbe(false), SandboxMode::Off, "libcef_sandbox.dylib is missing");
+	ExpectFallback("macOS, sandbox library", MacProbe(true), false);
+	ExpectFallback("macOS, no sandbox library", MacProbe(false), true);
+	ExpectWarning("macOS, sandbox library", MacProbe(true), nullptr);
+	ExpectWarning("macOS, no sandbox library", MacProbe(false), "SandboxFallback.Message.NoSandboxLibrary");
 
 	/* The warning (obs-rust/obs-studio#2218): only for the fallback, with
 	 * the message for the cause, and nothing to cancel. */

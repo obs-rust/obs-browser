@@ -21,8 +21,10 @@
 
 /* Whether the CEF sandbox can work, decided before CefInitialize
  * (obs-rust/obs-studio#1092). With the sandbox on, Chromium exits the whole
- * process when it cannot sandbox: as root, and when it finds no user
- * namespaces and a chrome-sandbox helper that is not setuid root. */
+ * process when it cannot sandbox: on Linux as root, and when it finds no
+ * user namespaces and a chrome-sandbox helper that is not setuid root. On
+ * macOS each helper loads libcef_sandbox.dylib from the CEF framework; a
+ * helper that cannot exits, and no browser source renders. */
 
 enum class SandboxHelper {
 	Absent,     /* no chrome-sandbox next to libcef */
@@ -30,9 +32,11 @@ enum class SandboxHelper {
 	NotSetuid,  /* present, but Chromium cannot use it */
 };
 
-/* The facts the decision uses. ProbeSandbox fills them on Linux. */
+/* The facts the decision uses. ProbeSandbox fills them on Linux and macOS. */
 struct SandboxProbe {
 	bool supported = false;       /* a probe exists for this platform */
+	bool macos = false;           /* the facts below are macOS's, not Linux's */
+	bool sandbox_library = false; /* macOS: libcef_sandbox.dylib is in the framework's Libraries */
 	bool root = false;            /* the effective user is root */
 	bool user_namespaces = false; /* a child can create user, PID and network namespaces and map its uid */
 	SandboxHelper helper = SandboxHelper::Absent;
@@ -42,6 +46,7 @@ enum class SandboxMode {
 	Off,          /* settings.no_sandbox = true */
 	Namespaces,   /* Chromium's user namespace sandbox */
 	SetuidHelper, /* Chromium's setuid chrome-sandbox helper */
+	Seatbelt,     /* macOS: the helpers' seatbelt sandbox (libcef_sandbox.dylib) */
 };
 
 struct SandboxDecision {
@@ -54,7 +59,7 @@ SandboxDecision DecideSandbox(const SandboxProbe &probe);
 
 /* The fallback (B in obs-rust/obs-studio#1092): a probe says the sandbox
  * cannot work, so the browser runs without it, and the user is warned.
- * Without a probe (Windows, macOS for now) the sandbox is off as before,
+ * Without a probe (Windows for now) the sandbox is off as before,
  * and only the log says so. */
 bool SandboxFallback(const SandboxProbe &probe, const SandboxDecision &decision);
 

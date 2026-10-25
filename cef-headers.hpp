@@ -42,6 +42,7 @@
 #include <include/cef_jsdialog_handler.h>
 #if defined(__APPLE__)
 #include "include/wrapper/cef_library_loader.h"
+#include "include/cef_sandbox_mac.h"
 #endif
 
 #if !defined(_WIN32) && !defined(__APPLE__) && \

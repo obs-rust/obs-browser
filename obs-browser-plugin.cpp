@@ -59,7 +59,12 @@
 
 #if !defined(_WIN32) && !defined(__APPLE__)
 #include "drm-format.hpp"
+#endif
+#if !defined(_WIN32) && !defined(__APPLE__)
 #include <dlfcn.h>
+#endif
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
 #endif
 
 OBS_DECLARE_MODULE()
@@ -299,7 +304,18 @@ static CefRefPtr<BrowserApp> app;
 static bool UseCefSandbox(void)
 {
 	std::string cef_dir;
-#if !defined(_WIN32) && !defined(__APPLE__)
+#ifdef __APPLE__
+	/* The framework next to the helpers, where each helper looks for
+	 * libcef_sandbox.dylib: <app>/Contents/Frameworks/Chromium Embedded
+	 * Framework.framework, from <app>/Contents/MacOS/<executable>. */
+	uint32_t size = 0;
+	_NSGetExecutablePath(nullptr, &size);
+	std::string exe(size, '\0');
+	if (size && _NSGetExecutablePath(exe.data(), &size) == 0) {
+		exe.resize(strlen(exe.c_str()));
+		cef_dir = exe.substr(0, exe.find_last_of('/')) + "/../Frameworks/Chromium Embedded Framework.framework";
+	}
+#elif !defined(_WIN32)
 	Dl_info info;
 	if (dladdr(reinterpret_cast<void *>(&cef_version_info), &info) && info.dli_fname) {
 		cef_dir = info.dli_fname;
