@@ -904,8 +904,14 @@ bool obs_module_load(void)
 	qRegisterMetaType<MessageTask>("MessageTask");
 #endif
 
-	os_event_init(&cef_started_event, OS_EVENT_TYPE_MANUAL);
-	os_event_init(&cef_initialized_event, OS_EVENT_TYPE_MANUAL);
+	if (os_event_init(&cef_started_event, OS_EVENT_TYPE_MANUAL) != 0 ||
+	    os_event_init(&cef_initialized_event, OS_EVENT_TYPE_MANUAL) != 0) {
+		blog(LOG_ERROR, "[obs-browser]: Failed to create CEF startup events");
+		os_event_destroy(cef_started_event);
+		cef_started_event = nullptr;
+		cef_initialized_event = nullptr;
+		return false;
+	}
 
 #if defined(_WIN32) && CHROME_VERSION_BUILD < 5615
 	/* CefEnableHighDPISupport doesn't do anything on OS other than Windows. Would also crash macOS at this point as CEF is not directly linked */
