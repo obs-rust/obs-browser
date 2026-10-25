@@ -23,6 +23,7 @@
 #include <obs-frontend-api.h>
 #include <obs.hpp>
 #include <util/platform.h>
+#include <util/util_uint64.h>
 #include <QApplication>
 #include <QThread>
 #include <QToolTip>
@@ -574,10 +575,73 @@ void BrowserClient::OnAudioStreamStarted(CefRefPtr<CefBrowser> browser, const Ce
 	frames_per_buffer = params_.frames_per_buffer;
 }
 
+/* libobs's TS_SMOOTHING_THRESHOLD and MAX_TS_VAR (obs-internal.h) */
+static const uint64_t kTsSmoothing = 70000000ULL;
+static const uint64_t kMaxTsVar = 2000000000ULL;
+/* Whether to drop a packet that arrives too late to mix
+ * (obs-rust/obs-studio#2335).
+ *
+ * The packets carry their capture time on OBS's clock. Under load, CEF's
+ * capture can stall for up to a second and then deliver the backlog at once.
+ * OBS then places the backlog at its capture time, behind the block it is
+ * mixing, and raises its global audio buffering by the difference to fit it
+ * in. That buffering delays every source and never comes back down, so a
+ * single stall adds up to 960 ms of latency to the whole stream until OBS
+ * restarts.
+ *
+ * Drop such packets instead: the mix has passed them, so they cannot play
+ * without that delay. A packet that continues the stream without a pause is
+ * appended to the source's buffer, whatever its timestamp, and is always
+ * kept. So is one delivered on time, within its own duration, so that OBS
+ * buffers once for the capture's normal latency. One up to an OBS block
+ * later is dropped, unless such packets keep coming for longer than OBS's
+ * timestamp smoothing: then OBS buffers less than the capture's latency and
+ * may raise it. Packets keep their timestamps, so the audio stays in sync
+ * with video. */
+bool BrowserClient::AudioTooLate(uint64_t now, uint64_t timestamp, uint64_t duration)
+{
+	uint64_t block = util_mul_div64(AUDIO_OUTPUT_FRAMES, 1000000000ULL, (uint64_t)sample_rate);
+	/* A pause in delivery after which OBS may have dropped the source's
+	 * partial buffer as stopped */
+	uint64_t stall = 3 * block;
+	bool smoothed = audio_next_ts && (timestamp > audio_next_ts ? timestamp - audio_next_ts
+								    : audio_next_ts - timestamp) < kTsSmoothing;
+	/* Where OBS will put the packet: its smoothing moves a packet that
+	 * nearly continues the last one onto it. */
+	uint64_t placed = smoothed ? audio_next_ts : timestamp;
+
+	bool continues = smoothed && now - audio_last_output < stall;
+	/* Further off, OBS moves the packet onto its own clock itself. */
+	bool same_clock = placed < now && now - placed < kMaxTsVar;
+	if (!continues && same_clock && now - placed > duration && placed < bs->audio_mix_end) {
+		bool nearly_on_time = now - placed <= duration + block;
+		audio_nearly_on_time = nearly_on_time ? audio_nearly_on_time + duration : 0;
+		if (!nearly_on_time || audio_nearly_on_time < kTsSmoothing) {
+			audio_dropped += duration;
+			return true;
+		}
+	}
+	audio_nearly_on_time = 0;
+
+	if (audio_dropped) {
+		blog(LOG_INFO, "[obs-browser: '%s'] Dropped %.1f ms of audio that arrived too late to mix",
+		     obs_source_get_name(bs->source), (double)audio_dropped / 1e6);
+		audio_dropped = 0;
+	}
+	audio_next_ts = placed + duration;
+	audio_last_output = now;
+	return false;
+}
+
 void BrowserClient::OnAudioStreamPacket(CefRefPtr<CefBrowser> browser, const float **data, int frames, int64_t pts)
 {
 	UNUSED_PARAMETER(browser);
-	if (!valid()) {
+	if (!valid() || sample_rate <= 0) {
+		return;
+	}
+	uint64_t timestamp = (uint64_t)pts * 1000000ULL;
+	uint64_t duration = util_mul_div64((uint64_t)frames, 1000000000ULL, (uint64_t)sample_rate);
+	if (AudioTooLate(os_gettime_ns(), timestamp, duration)) {
 		return;
 	}
 	struct obs_source_audio audio = {};
@@ -591,7 +655,7 @@ void BrowserClient::OnAudioStreamPacket(CefRefPtr<CefBrowser> browser, const flo
 	audio.frames = frames;
 	audio.format = AUDIO_FORMAT_FLOAT_PLANAR;
 	audio.speakers = speakers;
-	audio.timestamp = (uint64_t)pts * 1000000LLU;
+	audio.timestamp = timestamp;
 	obs_source_output_audio(bs->source, &audio);
 }
 

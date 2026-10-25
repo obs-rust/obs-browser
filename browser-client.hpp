@@ -44,6 +44,14 @@ class BrowserClient : public CefClient,
 
 	inline bool valid() const;
 
+	/* Audio thread only: where OBS expects the next audio packet (its
+	 * timestamp smoothing) and when the last one was output. */
+	uint64_t audio_next_ts = 0;
+	uint64_t audio_last_output = 0;
+	uint64_t audio_dropped = 0;
+	uint64_t audio_nearly_on_time = 0;
+	bool AudioTooLate(uint64_t now, uint64_t timestamp, uint64_t duration);
+
 	void UpdateExtraTexture();
 
 public:
