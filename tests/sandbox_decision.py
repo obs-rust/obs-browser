@@ -17,7 +17,8 @@ subprocess.run(
      str(root / "tests" / "sandbox-decision.cpp"), str(root / "browser-sandbox.cpp"), "-o", str(executable)],
     check=True,
 )
-result = subprocess.run([str(executable)], capture_output=True, text=True, timeout=30)
+result = subprocess.run([str(executable), str(root / "data" / "locale" / "en-US.ini")], capture_output=True,
+                        text=True, timeout=30)
 print(result.stdout, end="")
 print(result.stderr, end="")
 if result.returncode:

@@ -63,6 +63,12 @@ bool SandboxFallback(const SandboxProbe &probe, const SandboxDecision &decision)
 	return probe.supported && decision.mode == SandboxMode::Off;
 }
 
+bool SandboxWarningFor(const SandboxProbe &, const SandboxDecision &, SandboxWarning *)
+{
+	/* RED (obs-rust/obs-studio#2218). */
+	return false;
+}
+
 #ifdef __linux__
 namespace {
 

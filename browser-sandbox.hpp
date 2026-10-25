@@ -58,5 +58,19 @@ SandboxDecision DecideSandbox(const SandboxProbe &probe);
  * and only the log says so. */
 bool SandboxFallback(const SandboxProbe &probe, const SandboxDecision &decision);
 
+/* The fallback warning (obs-rust/obs-studio#2218) for
+ * obs_frontend_warn_fallback(). The keys are in data/locale; the message
+ * says what failed, that browser sources run without the sandbox, and what
+ * the user can do, for the cause the probe found. */
+struct SandboxWarning {
+	const char *id;          /* "browser.sandbox", in the log line */
+	const char *title_key;   /* locale key of the title */
+	const char *message_key; /* locale key of the message */
+	bool can_cancel;         /* false: there is nothing to stop */
+};
+
+/* Pure: whether to warn (only for the fallback), and with what. */
+bool SandboxWarningFor(const SandboxProbe &probe, const SandboxDecision &decision, SandboxWarning *warning);
+
 /* cef_dir: the directory of libcef (and of chrome-sandbox). */
 SandboxProbe ProbeSandbox(const std::string &cef_dir);

@@ -1,11 +1,14 @@
 #include <cstdio>
 #include <cstring>
+#include <fstream>
+#include <string>
 
 #include "browser-sandbox.hpp"
 
 namespace {
 
 int failures = 0;
+std::string locale_text; /* data/locale/en-US.ini, from argv[1] */
 
 void Expect(const char *name, const SandboxProbe &probe, SandboxMode mode, const char *reason_part)
 {
@@ -32,6 +35,38 @@ void ExpectFallback(const char *name, const SandboxProbe &probe, bool fallback)
 	}
 }
 
+bool HasLocaleKey(const char *key)
+{
+	return key && locale_text.find("\n" + std::string(key) + "=") != std::string::npos;
+}
+
+/* message_key: nullptr when the case must not warn. */
+void ExpectWarning(const char *name, const SandboxProbe &probe, const char *message_key)
+{
+	SandboxWarning warning{};
+	bool warns = SandboxWarningFor(probe, DecideSandbox(probe), &warning);
+	bool ok;
+	if (!message_key) {
+		ok = !warns;
+	} else {
+		ok = warns && warning.id && std::strcmp(warning.id, "browser.sandbox") == 0 && warning.message_key &&
+		     std::strcmp(warning.message_key, message_key) == 0 && warning.title_key &&
+		     HasLocaleKey(warning.title_key) && HasLocaleKey(warning.message_key) && !warning.can_cancel;
+	}
+	if (!ok) {
+		std::fprintf(stderr,
+			     "FAIL warning %s: warns %d (expected %d), id \"%s\", title \"%s\" (in en-US.ini: %d), "
+			     "message \"%s\" (expected \"%s\", in en-US.ini: %d), can_cancel %d\n",
+			     name, warns, message_key != nullptr, warning.id ? warning.id : "(null)",
+			     warning.title_key ? warning.title_key : "(null)", HasLocaleKey(warning.title_key),
+			     warning.message_key ? warning.message_key : "(null)", message_key ? message_key : "(none)",
+			     HasLocaleKey(warning.message_key), warning.can_cancel);
+		failures++;
+	} else {
+		std::printf("ok   warning %s\n", name);
+	}
+}
+
 SandboxProbe Probe(bool root, bool user_namespaces, SandboxHelper helper)
 {
 	SandboxProbe probe;
@@ -44,8 +79,13 @@ SandboxProbe Probe(bool root, bool user_namespaces, SandboxHelper helper)
 
 } // namespace
 
-int main()
+int main(int argc, char **argv)
 {
+	if (argc > 1) {
+		std::ifstream in(argv[1]);
+		locale_text = "\n" + std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+	}
+
 	/* No probe (Windows, macOS for now): as today. */
 	Expect("unsupported platform", SandboxProbe{}, SandboxMode::Off, "platform");
 
@@ -77,6 +117,19 @@ int main()
 	ExpectFallback("user, no namespaces, setuid helper", Probe(false, false, SandboxHelper::SetuidRoot), false);
 	ExpectFallback("user, no namespaces, helper not setuid", Probe(false, false, SandboxHelper::NotSetuid), true);
 	ExpectFallback("user, no namespaces, no helper", Probe(false, false, SandboxHelper::Absent), true);
+
+	/* The warning (obs-rust/obs-studio#2218): only for the fallback, with
+	 * the message for the cause, and nothing to cancel. */
+	ExpectWarning("unsupported platform", SandboxProbe{}, nullptr);
+	ExpectWarning("root", Probe(true, true, SandboxHelper::Absent), "SandboxFallback.Message.Root");
+	ExpectWarning("root, setuid helper", Probe(true, false, SandboxHelper::SetuidRoot),
+		      "SandboxFallback.Message.Root");
+	ExpectWarning("user, namespaces", Probe(false, true, SandboxHelper::Absent), nullptr);
+	ExpectWarning("user, no namespaces, setuid helper", Probe(false, false, SandboxHelper::SetuidRoot), nullptr);
+	ExpectWarning("user, no namespaces, helper not setuid", Probe(false, false, SandboxHelper::NotSetuid),
+		      "SandboxFallback.Message.NoNamespaces");
+	ExpectWarning("user, no namespaces, no helper", Probe(false, false, SandboxHelper::Absent),
+		      "SandboxFallback.Message.NoNamespaces");
 
 	if (failures) {
 		std::fprintf(stderr, "%d case(s) failed\n", failures);
