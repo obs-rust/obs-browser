@@ -17,6 +17,9 @@
 
 #include "browser-sandbox.hpp"
 
+#if defined(__linux__) || defined(__APPLE__)
+#include <sys/stat.h>
+#endif
 #ifdef __linux__
 #include <cerrno>
 #include <cstdlib>
@@ -33,6 +36,15 @@ SandboxDecision DecideSandbox(const SandboxProbe &probe)
 {
 	if (!probe.supported) {
 		return {SandboxMode::Off, "no sandbox probe on this platform"};
+	}
+
+	/* macOS: each helper sandboxes itself with the framework's
+	 * libcef_sandbox.dylib; without it a sandboxed helper exits. */
+	if (probe.macos) {
+		if (probe.sandbox_library) {
+			return {SandboxMode::Seatbelt, "libcef_sandbox.dylib is in the CEF framework"};
+		}
+		return {SandboxMode::Off, "libcef_sandbox.dylib is missing from the CEF framework"};
 	}
 
 	/* Chromium does not run sandboxed as root: it exits the process. */
@@ -68,10 +80,13 @@ bool SandboxWarningFor(const SandboxProbe &probe, const SandboxDecision &decisio
 	if (!SandboxFallback(probe, decision)) {
 		return false;
 	}
-	/* As root Chromium never sandboxes; otherwise there were no user
-	 * namespaces and no usable chrome-sandbox. */
-	*warning = {"browser.sandbox", "SandboxFallback.Title",
-		    probe.root ? "SandboxFallback.Message.Root" : "SandboxFallback.Message.NoNamespaces", false};
+	/* macOS: the sandbox library is missing. Linux: as root Chromium never
+	 * sandboxes; otherwise there were no user namespaces and no usable
+	 * chrome-sandbox. */
+	const char *message = probe.macos  ? "SandboxFallback.Message.NoSandboxLibrary"
+			      : probe.root ? "SandboxFallback.Message.Root"
+					   : "SandboxFallback.Message.NoNamespaces";
+	*warning = {"browser.sandbox", "SandboxFallback.Title", message, false};
 	return true;
 }
 
@@ -184,6 +199,20 @@ SandboxProbe ProbeSandbox(const std::string &cef_dir)
 	/* As root the decision is off anyway; do not fork for nothing. */
 	probe.user_namespaces = !probe.root && ProbeUserNamespaces();
 	probe.helper = ProbeHelper(cef_dir);
+	return probe;
+}
+#elif defined(__APPLE__)
+SandboxProbe ProbeSandbox(const std::string &cef_dir)
+{
+	/* cef_dir: the CEF framework next to the helpers. Each helper loads
+	 * Libraries/libcef_sandbox.dylib from it. */
+	SandboxProbe probe;
+	probe.supported = true;
+	probe.macos = true;
+	struct stat st;
+	probe.sandbox_library = !cef_dir.empty() &&
+				stat((cef_dir + "/Libraries/libcef_sandbox.dylib").c_str(), &st) == 0 &&
+				S_ISREG(st.st_mode);
 	return probe;
 }
 #else
