@@ -1,0 +1,28 @@
+<!doctype html>
+<html>
+<body style="background:#123">
+<script>
+// @MODE@ is "alerts" (a 1 s tone every 5 s) or "continuous".
+const mode = "@MODE@";
+const context = new AudioContext();
+function tone(seconds) {
+  const oscillator = context.createOscillator(), gain = context.createGain();
+  oscillator.frequency.value = 440;
+  gain.gain.value = 0.3;
+  oscillator.connect(gain).connect(context.destination);
+  oscillator.start();
+  oscillator.stop(context.currentTime + seconds);
+}
+if (mode === "continuous") {
+  tone(1e6);
+} else {
+  const alert = () => { tone(1); setTimeout(alert, 5000); };
+  alert();
+}
+// Keep the video changing, as an alert overlay would.
+setInterval(() => {
+  document.body.style.background = "#" + (Math.random() * 0xffffff | 0).toString(16).padStart(6, "0");
+}, 500);
+</script>
+</body>
+</html>

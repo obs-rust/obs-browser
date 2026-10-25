@@ -22,6 +22,7 @@
 #include "wide-string.hpp"
 #include <nlohmann/json.hpp>
 #include <util/threading.h>
+#include <util/util_uint64.h>
 #include <QApplication>
 #include <util/dstr.h>
 #include <functional>
@@ -71,8 +72,17 @@ static void SendBrowserVisibility(CefRefPtr<CefBrowser> browser, bool isVisible)
 
 void DispatchJSEvent(std::string eventName, std::string jsonString, BrowserSource *browser = nullptr);
 
+static void AudioMixed(void *param, size_t, struct audio_data *data)
+{
+	BrowserSource *bs = static_cast<BrowserSource *>(param);
+	uint32_t rate = audio_output_get_sample_rate(obs_get_audio());
+	bs->audio_mix_end = data->timestamp + util_mul_div64(data->frames, 1000000000ULL, rate);
+}
+
 BrowserSource::BrowserSource(obs_data_t *, obs_source_t *source_) : source(source_)
 {
+	/* Track where the mix is, for BrowserClient::AudioTooLate */
+	obs_add_raw_audio_callback(0, nullptr, AudioMixed, this);
 
 	/* Register Refresh hotkey */
 	auto refreshFunction = [](void *data, obs_hotkey_id, obs_hotkey_t *, bool pressed) {
@@ -140,6 +150,7 @@ BrowserSource::~BrowserSource()
 void BrowserSource::Destroy()
 {
 	destroying = true;
+	obs_remove_raw_audio_callback(0, AudioMixed, this);
 	DestroyTextures();
 
 	lock_guard<mutex> lock(browser_list_mutex);

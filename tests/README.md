@@ -112,3 +112,33 @@ uv run --no-project python tests/audio_recovery.py \
 ```
 
 Linux only; it needs CEF and kills a process, so CI does not run it.
+
+## Audio buffering under load
+
+`audio_buffering.py` compiles `audio-buffering.c` against the actual libobs
+and plays `audio-buffering.html` through a real browser source with "Control
+audio via OBS": by default a 1 s WebAudio tone every 5 s, as an alert box
+plays (`--mode continuous` plays one endless tone). After 20 quiet seconds it
+loads every CPU in bursts (busy processes it starts and stops by PID; 4 s on,
+6 s off) until the run ends (150 s by default). It requires that OBS's global
+audio buffering stays at the value it had before the load
+(obs-rust/obs-studio#2335: a stall in the capture under load used to raise it
+for good, up to 960 ms), that every alert period has packets, and that each
+tone starts in the mix within one audio block (1024 frames, plus 1 ms for
+CEF's millisecond timestamps) of its capture timestamp, on the clock video
+uses. Run it with an owned Xvfb and dbus session, no audio server and a fresh
+HOME, for example inside `unshare -rn` with `PULSE_SERVER=unix:/nonexistent`:
+
+```sh
+uv run --no-project python tests/audio_buffering.py \
+  --include-dir /path/to/obs/libobs --include-dir /path/to/generated/config \
+  --library-dir /path/to/libobs \
+  --module /path/to/staged/obs-browser.so --data /path/to/obs-browser/data \
+  --libobs-data /path/to/libobs/data --output-dir /path/to/new-output
+```
+
+The load makes the result depend on the machine: on a machine with many idle
+cores the bursts may not stall the capture at all, and the test then passes
+on any build. Check that the output shows late packets (`arrival after the
+timestamp ... max` on a build without the fix, `late audio dropped` with it),
+or raise `--burners`.
