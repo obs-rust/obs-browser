@@ -63,10 +63,16 @@ bool SandboxFallback(const SandboxProbe &probe, const SandboxDecision &decision)
 	return probe.supported && decision.mode == SandboxMode::Off;
 }
 
-bool SandboxWarningFor(const SandboxProbe &, const SandboxDecision &, SandboxWarning *)
+bool SandboxWarningFor(const SandboxProbe &probe, const SandboxDecision &decision, SandboxWarning *warning)
 {
-	/* RED (obs-rust/obs-studio#2218). */
-	return false;
+	if (!SandboxFallback(probe, decision)) {
+		return false;
+	}
+	/* As root Chromium never sandboxes; otherwise there were no user
+	 * namespaces and no usable chrome-sandbox. */
+	*warning = {"browser.sandbox", "SandboxFallback.Title",
+		    probe.root ? "SandboxFallback.Message.Root" : "SandboxFallback.Message.NoNamespaces", false};
+	return true;
 }
 
 #ifdef __linux__
