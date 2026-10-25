@@ -88,3 +88,27 @@ Linux x86_64 (Debian 13 LXC container, kernel 7.0.14, CEF 7871
 namespace sandbox for every helper state; as a normal user with
 `RestrictNamespaces=~user`, off without a helper or with a helper that is not
 setuid, and the setuid helper with a helper that is setuid root.
+
+## WebAudio after the audio service dies
+
+`audio_recovery.py` compiles `audio-recovery.c` against the actual libobs and
+plays `audio-recovery.html` (a WebAudio tone) through real browser sources
+with "Control audio via OBS". Once packets flow it SIGKILLs only this run's
+Chromium audio service process, found through the harness's process tree,
+and requires packets again in the fifth second after the kill. Scenarios:
+`plain` (also checks that the page sees an unchanged `AudioContext`),
+`repeated` (three kills, on a page that replaces and freezes the globals a
+recovery script might use), `page-suspend` (a context the page suspended
+itself stays suspended) and `two-sources`. Run it with an owned Xvfb and
+dbus session, no audio server and a fresh HOME, for example inside
+`unshare -rn` with `PULSE_SERVER=unix:/nonexistent`:
+
+```sh
+uv run --no-project python tests/audio_recovery.py \
+  --include-dir /path/to/obs/libobs --include-dir /path/to/generated/config \
+  --library-dir /path/to/staged/lib --module /path/to/staged/obs-browser.so \
+  --data /path/to/obs-browser/data --libobs-data /path/to/staged/libobs/data \
+  --output-dir /path/to/new-output [--scenario plain ...]
+```
+
+Linux only; it needs CEF and kills a process, so CI does not run it.
