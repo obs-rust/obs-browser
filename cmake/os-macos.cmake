@@ -10,7 +10,11 @@ target_link_libraries(obs-browser PRIVATE Qt::Widgets CEF::Wrapper "$<LINK_LIBRA
                                           "$<LINK_LIBRARY:FRAMEWORK,AppKit.framework>")
 
 set(helper_basename browser-helper)
-set(helper_output_name "OBS Helper")
+# Chromium finds its helpers by the app's executable name ("<app> Helper",
+# "<app> Helper (GPU)", ...), so they follow the app identity
+# (cmake/common/app-identity.cmake): "OBS Helper" upstream, "OBS-Studio-Rust
+# Helper" in the Rust brand (obs-rust/obs-studio#2386).
+set(helper_output_name "${OBS_MACOS_BUNDLE_NAME} Helper")
 set(helper_suffixes "::" " (GPU):_gpu:.gpu" " (Plugin):_plugin:.plugin" " (Renderer):_renderer:.renderer")
 
 foreach(helper IN LISTS helper_suffixes)
@@ -51,7 +55,7 @@ foreach(helper IN LISTS helper_suffixes)
     PROPERTIES
       OUTPUT_NAME "${target_output_name}"
       FOLDER plugins/obs-browser/Helpers
-      XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER com.obsproject.obs-studio.helper${helper_plist}
+      XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER ${OBS_MACOS_BUNDLE_ID}.helper${helper_plist}
       XCODE_ATTRIBUTE_CURRENT_PROJECT_VERSION ${OBS_BUILD_NUMBER}
       XCODE_ATTRIBUTE_MARKETING_VERSION ${OBS_VERSION_CANONICAL}
       XCODE_ATTRIBUTE_GENERATE_INFOPLIST_FILE YES
