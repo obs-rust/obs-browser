@@ -44,6 +44,125 @@ constexpr bool kIsPlatformWindows = true;
 constexpr bool kIsPlatformWindows = false;
 #endif
 
+/* Runs in every frame before the page's own scripts. When Chromium's audio
+ * service process dies (a crash, or the hang monitor ending it), each
+ * running AudioContext fires "error" and is suspended, and nothing resumes
+ * it: the source stays silent until the page reloads. Resume such contexts,
+ * unless the page suspended them itself. Uses only what it captures here,
+ * so pages that later replace or freeze globals do not break it; the page
+ * still sees the native constructor, prototype and methods. */
+static const char audioContextRecoveryScript[] = R"js((() => {
+	'use strict';
+	const apply = Reflect.apply, construct = Reflect.construct;
+	const defineProperty = Object.defineProperty, getDescriptor = Object.getOwnPropertyDescriptor;
+	const getPrototype = Object.getPrototypeOf;
+	const addListener = EventTarget.prototype.addEventListener;
+	const then = Promise.prototype.then;
+	const later = setTimeout, global = globalThis;
+	const records = new WeakMap(), getRecord = WeakMap.prototype.get, setRecord = WeakMap.prototype.set;
+	const ProxyClass = Proxy;
+	const ignore = () => {};
+	/* Wait 3 s before the first resume: with "Control audio via OBS", CEF
+	 * keeps the capture stream of the dead audio service until the page has
+	 * been silent for 2 s, and only captures again after that. */
+	const delays = [3000, 1000, 2000, 2000, 2000, 2000, 2000, 2000];
+	const wrapped = new Map(), getWrapped = Map.prototype.get, setWrapped = Map.prototype.set;
+
+	function findGetter(object, name) {
+		for (; object; object = getPrototype(object)) {
+			const descriptor = getDescriptor(object, name);
+			if (descriptor)
+				return descriptor.get;
+		}
+		return undefined;
+	}
+
+	function wrap(Native) {
+		const existing = apply(getWrapped, wrapped, [Native]);
+		if (existing)
+			return existing;
+		const prototype = Native.prototype;
+		const stateGetter = findGetter(prototype, 'state');
+		const nativeResume = prototype.resume, nativeSuspend = prototype.suspend;
+		if (typeof stateGetter !== 'function' || typeof nativeResume !== 'function' ||
+		    typeof nativeSuspend !== 'function')
+			return Native;
+		const state = (context) => apply(stateGetter, context, []);
+
+		/* One chain of attempts per error; a later error starts a new chain
+		 * and ends the older one. */
+		function attempt(context, record, chain, index) {
+			if (chain !== record.chain || !record.wanted || index >= delays.length)
+				return;
+			const current = state(context);
+			if (current === 'running' || current === 'closed')
+				return;
+			apply(then, apply(nativeResume, context, []), [ignore, ignore]);
+			schedule(context, record, chain, index + 1);
+		}
+
+		function schedule(context, record, chain, index) {
+			if (index < delays.length)
+				apply(later, global, [() => attempt(context, record, chain, index), delays[index]]);
+		}
+
+		function track(context) {
+			const record = {wanted: state(context) === 'running', pendingSuspends: 0, chain: 0};
+			apply(setRecord, records, [context, record]);
+			apply(addListener, context, ['statechange', () => {
+				const current = state(context);
+				if (current === 'running' && !record.pendingSuspends)
+					record.wanted = true;
+				else if (current === 'closed')
+					record.wanted = false;
+			}]);
+			apply(addListener, context, ['error', () => {
+				if (record.wanted)
+					schedule(context, record, ++record.chain, 0);
+			}]);
+		}
+
+		const Wrapped = new ProxyClass(Native, {
+			construct(target, args, newTarget) {
+				const context = construct(target, args, newTarget);
+				track(context);
+				return context;
+			},
+		});
+		const suspend = new ProxyClass(nativeSuspend, {
+			apply(target, self, args) {
+				const record = apply(getRecord, records, [self]);
+				const result = apply(target, self, args);
+				if (record) {
+					record.wanted = false;
+					record.pendingSuspends++;
+					const settled = () => record.pendingSuspends--;
+					apply(then, result, [settled, settled]);
+				}
+				return result;
+			},
+		});
+		const suspendDescriptor = getDescriptor(prototype, 'suspend');
+		if (suspendDescriptor && suspendDescriptor.value === nativeSuspend)
+			defineProperty(prototype, 'suspend', {...suspendDescriptor, value: suspend});
+		const constructorDescriptor = getDescriptor(prototype, 'constructor');
+		if (constructorDescriptor && constructorDescriptor.value === Native)
+			defineProperty(prototype, 'constructor', {...constructorDescriptor, value: Wrapped});
+		apply(setWrapped, wrapped, [Native, Wrapped]);
+		return Wrapped;
+	}
+
+	for (const name of ['AudioContext', 'webkitAudioContext']) {
+		try {
+			const descriptor = getDescriptor(global, name);
+			if (descriptor && typeof descriptor.value === 'function')
+				defineProperty(global, name, {...descriptor, value: wrap(descriptor.value)});
+		} catch (error) {
+			// Leave this name as the browser made it.
+		}
+	}
+})();)js";
+
 CefRefPtr<CefRenderProcessHandler> BrowserApp::GetRenderProcessHandler()
 {
 	return this;
@@ -198,6 +317,11 @@ void BrowserApp::OnContextCreated(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFr
 		CefRefPtr<CefV8Value> func = CefV8Value::CreateFunction(name, this);
 		obsStudioObj->SetValue(name, func, V8_PROPERTY_ATTRIBUTE_NONE);
 	}
+
+	/* If the script fails, the page keeps the browser's own AudioContext. */
+	CefRefPtr<CefV8Value> result;
+	CefRefPtr<CefV8Exception> exception;
+	context->Eval(audioContextRecoveryScript, CefString(), 0, result, exception);
 
 	UNUSED_PARAMETER(browser);
 }

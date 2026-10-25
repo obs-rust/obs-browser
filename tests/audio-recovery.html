@@ -1,0 +1,109 @@
+<!doctype html>
+<html>
+<body>
+<script>
+// Page for audio_recovery.py; the test replaces @MODE@.
+// It reports through console.error, which obs-browser writes to the OBS log.
+const mode = '@MODE@';
+const report = (message) => console.error('audio-test ' + message);
+
+function playTone(context, frequency) {
+	const oscillator = context.createOscillator();
+	const gain = context.createGain();
+	oscillator.frequency.value = frequency;
+	gain.gain.value = 0.2;
+	oscillator.connect(gain);
+	gain.connect(context.destination);
+	oscillator.start();
+}
+
+function compatibility() {
+	const isNative = (f) => /\{\s*\[native code\]\s*\}$/.test(Function.prototype.toString.call(f));
+	const global = Object.getOwnPropertyDescriptor(window, 'AudioContext');
+	const suspend = Object.getOwnPropertyDescriptor(AudioContext.prototype, 'suspend');
+	const probe = new AudioContext();
+	class Subclass extends AudioContext {}
+	const subclassed = new Subclass();
+	let callWithoutNew = false;
+	try {
+		AudioContext();
+	} catch (error) {
+		callWithoutNew = error instanceof TypeError;
+	}
+	const checks = {
+		instance: probe instanceof AudioContext && probe instanceof BaseAudioContext,
+		prototype: Object.getPrototypeOf(probe) === AudioContext.prototype,
+		constructor: probe.constructor === AudioContext,
+		name: AudioContext.name === 'AudioContext' && AudioContext.length === 0,
+		native: isNative(AudioContext) && isNative(AudioContext.prototype.suspend) &&
+			isNative(AudioContext.prototype.resume),
+		global: global.writable && !global.enumerable && global.configurable,
+		method: suspend.writable && suspend.enumerable && suspend.configurable &&
+			AudioContext.prototype.suspend.name === 'suspend' && AudioContext.prototype.suspend.length === 0,
+		subclass: subclassed instanceof Subclass && subclassed instanceof AudioContext,
+		callWithoutNew,
+		offline: isNative(OfflineAudioContext) &&
+			Object.getPrototypeOf(OfflineAudioContext.prototype) === BaseAudioContext.prototype &&
+			new OfflineAudioContext(1, 128, 48000) instanceof OfflineAudioContext,
+		webkit: typeof webkitAudioContext === 'undefined' || webkitAudioContext === AudioContext,
+	};
+	probe.close();
+	subclassed.close();
+	const failed = Object.keys(checks).filter((key) => !checks[key]);
+	report(failed.length ? 'compat fail ' + failed.join(',') : 'compat ok');
+}
+
+if (mode === 'hostile') {
+	// A page that replaces and freezes what a recovery script might use.
+	const Native = AudioContext;
+	window.AudioContext = class extends Native {};
+	Native.prototype.resume = function () {
+		return Promise.resolve();
+	};
+	EventTarget.prototype.addEventListener = function () {};
+	Promise.prototype.then = function () {
+		return this;
+	};
+	WeakMap.prototype.get = WeakMap.prototype.set = WeakMap.prototype.has = function () {
+		throw new Error('hostile');
+	};
+	Reflect.apply = Reflect.construct = function () {
+		throw new Error('hostile');
+	};
+	Function.prototype.call = Function.prototype.apply = function () {
+		throw new Error('hostile');
+	};
+	window.setTimeout = function () {
+		return 0;
+	};
+	Object.freeze(Native.prototype);
+	Object.freeze(BaseAudioContext.prototype);
+	Object.freeze(EventTarget.prototype);
+	Object.freeze(Native);
+	Object.freeze(window.AudioContext);
+}
+
+if (mode === 'plain')
+	compatibility();
+
+const contexts = [new AudioContext()];
+playTone(contexts[0], 440);
+if (mode === 'suspend') {
+	// The page suspends its second context itself; that must stick.
+	contexts.push(new AudioContext());
+	playTone(contexts[1], 660);
+	setTimeout(() => contexts[1].suspend(), 1000);
+}
+contexts.forEach((context, index) => {
+	context.onerror = () => report('error ' + index);
+});
+let last = '';
+setInterval(() => {
+	const states = contexts.map((context) => context.state).join(' ');
+	if (states !== last)
+		report('state ' + states);
+	last = states;
+}, 100);
+</script>
+</body>
+</html>
