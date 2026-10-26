@@ -438,7 +438,11 @@ void QCefWidgetInternal::showEvent(QShowEvent *event)
 		obs_browser_initialize();
 		connect(&timer, &QTimer::timeout, this, &QCefWidgetInternal::Init);
 		timer.start(500);
-		Init();
+		/* Not from inside showEvent: restoring a saved dock layout can
+		 * show a dock and close it again at once, and creating the
+		 * browser in between crashes CEF. With this widget as context,
+		 * the call is dropped if the widget is destroyed first. */
+		QTimer::singleShot(0, this, &QCefWidgetInternal::Init);
 	}
 }
 
