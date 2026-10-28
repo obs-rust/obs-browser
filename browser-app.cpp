@@ -444,13 +444,13 @@ bool BrowserApp::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefRefP
 		std::vector<CefString> names;
 		browser->GetFrameNames(names);
 		for (auto &name : names) {
-			CefRefPtr<CefFrame> frame =
+			CefRefPtr<CefFrame> target_frame =
 #if CHROME_VERSION_BUILD >= 6261
 				browser->GetFrameByName(name);
 #else
 				browser->GetFrame(name);
 #endif
-			CefRefPtr<CefV8Context> context = frame->GetV8Context();
+			CefRefPtr<CefV8Context> context = target_frame->GetV8Context();
 
 			context->Enter();
 
@@ -484,14 +484,14 @@ bool BrowserApp::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefRefP
 		CefRefPtr<CefValue> json = CefParseJSON(arguments->GetString(1).ToString(), {});
 
 		CefRefPtr<CefV8Value> callback = callbackMap[callbackID];
-		CefV8ValueList args;
+		CefV8ValueList callback_args;
 
 		CefRefPtr<CefV8Value> retval = CefValueToCefV8Value(json);
 
-		args.push_back(retval);
+		callback_args.push_back(retval);
 
 		if (callback) {
-			callback->ExecuteFunction(nullptr, args);
+			callback->ExecuteFunction(nullptr, callback_args);
 		}
 
 		context->Exit();
