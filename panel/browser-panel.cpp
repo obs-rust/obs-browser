@@ -478,8 +478,8 @@ void QCefWidgetInternal::executeJavaScript(const std::string &script_)
 	}
 
 	CefRefPtr<CefFrame> frame = cefBrowser->GetMainFrame();
-	std::string url = frame->GetURL();
-	frame->ExecuteJavaScript(script_, url, 0);
+	std::string frame_url = frame->GetURL();
+	frame->ExecuteJavaScript(script_, frame_url, 0);
 }
 
 void QCefWidgetInternal::allowAllPopups(bool allow)
