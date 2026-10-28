@@ -41,6 +41,10 @@ DECLARE_HANDLE(OBS_DPI_AWARENESS_CONTEXT);
 #define OBS_DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE ((OBS_DPI_AWARENESS_CONTEXT)-3)
 #define OBS_DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 ((OBS_DPI_AWARENESS_CONTEXT)-4)
 
+#if CHROME_VERSION_BUILD < 5615
+// Only called from the WinMain fallback below; with a CEF new enough to do
+// its own per-monitor v2 DPI awareness the call is compiled out, and an MSVC
+// /W4 build then reports the definition as an unreferenced static (C4505).
 static bool SetHighDPIv2Scaling()
 {
 	static BOOL(WINAPI * func)(OBS_DPI_AWARENESS_CONTEXT) = nullptr;
@@ -52,6 +56,7 @@ static bool SetHighDPIv2Scaling()
 
 	return !!func(OBS_DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 }
+#endif
 
 static void shutdown_check_thread(DWORD parent_pid, DWORD main_thread_id)
 {
