@@ -247,12 +247,12 @@ bool BrowserClient::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefR
 				return false;
 			}
 
-			const char *name = obs_source_get_name(current_scene);
-			if (!name) {
+			const char *scene_name = obs_source_get_name(current_scene);
+			if (!scene_name) {
 				return false;
 			}
 
-			json = {{"name", name},
+			json = {{"name", scene_name},
 				{"width", obs_source_get_width(current_scene)},
 				{"height", obs_source_get_height(current_scene)}};
 		} else if (name == "getTransitions") {
@@ -695,8 +695,8 @@ static CefAudioHandler::ChannelLayout Convert2CEFSpeakerLayout(int channels)
 bool BrowserClient::GetAudioParameters(CefRefPtr<CefBrowser> browser, CefAudioParameters &params)
 {
 	UNUSED_PARAMETER(browser);
-	int channels = (int)audio_output_get_channels(obs_get_audio());
-	params.channel_layout = Convert2CEFSpeakerLayout(channels);
+	int channel_count = (int)audio_output_get_channels(obs_get_audio());
+	params.channel_layout = Convert2CEFSpeakerLayout(channel_count);
 	params.sample_rate = (int)audio_output_get_sample_rate(obs_get_audio());
 	params.frames_per_buffer = kFramesPerBuffer;
 	return true;
