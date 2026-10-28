@@ -417,11 +417,11 @@ void QCefBrowserClient::OnLoadStart(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> f
 		return;
 	}
 
-	std::string script = "window.close = () => ";
-	script += "console.log(";
-	script += "'OBS browser docks cannot be closed using JavaScript.'";
-	script += ");";
-	frame->ExecuteJavaScript(script, "", 0);
+	std::string close_script = "window.close = () => ";
+	close_script += "console.log(";
+	close_script += "'OBS browser docks cannot be closed using JavaScript.'";
+	close_script += ");";
+	frame->ExecuteJavaScript(close_script, "", 0);
 }
 
 void QCefBrowserClient::OnLoadEnd(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame, int)
