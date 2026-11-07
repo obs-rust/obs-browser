@@ -1,9 +1,9 @@
 #!/usr/bin/env -S uv run --script
 """Exercise real module shutdown with a stalled cef_initialize interposition.
 
-Build startup-shutdown with startup_shutdown.py first. The shim blocks before
-CEF starts, or after real CEF has started helpers. A pipe releases slow starts;
-stalled cases never release it. No production timeout environment overrides.
+The shim blocks before CEF starts, or after real CEF has started helpers. A pipe
+releases slow starts; stalled cases never release it. No production timeout
+environment overrides. A static-destructor sentinel checks the fatal exit path.
 """
 import argparse
 import os
@@ -38,7 +38,13 @@ SHIM = r'''
 typedef int (*initialize_fn)(const void *, const void *, void *, void *);
 int cef_initialize(const void *args, const void *settings, void *app, void *sandbox)
 {
-    initialize_fn real = (initialize_fn)dlsym(RTLD_NEXT, "cef_initialize");
+    /* OBS loads modules locally, so RTLD_NEXT cannot see their dependencies. */
+    void *cef = dlopen("libcef.so", RTLD_LAZY | RTLD_NOLOAD);
+    initialize_fn real = cef ? (initialize_fn)dlsym(cef, "cef_initialize") : NULL;
+    if (!real) {
+        fprintf(stderr, "TEST: cannot resolve real cef_initialize: %s\n", dlerror());
+        _exit(91);
+    }
     int result = 0;
     if (getenv("STALL_AFTER_INIT"))
         result = real(args, settings, app, sandbox);
@@ -54,13 +60,15 @@ int cef_initialize(const void *args, const void *settings, void *app, void *sand
 '''
 
 
-def run_case(args, shim, output, name, after_init=False, release=False):
+def run_case(args, shim, output, name, after_init=False, release=False, wait_for_warning=False):
     config = output / name
     config.mkdir()
     read_fd, write_fd = os.pipe()
     env = dict(os.environ, LD_PRELOAD=str(shim), STALL_RELEASE_FD=str(read_fd))
     if after_init:
         env["STALL_AFTER_INIT"] = "1"
+    if not release:
+        env["TEST_EXPECT_ABANDON"] = "1"
     command = [str(args.executable.resolve()), str(args.module.resolve()),
                str(args.data.resolve()), str(config), "hold", "--password-store=basic"]
     evidence = []
@@ -85,13 +93,11 @@ def run_case(args, shim, output, name, after_init=False, release=False):
             text = b"".join(evidence)
             stalled = b"TEST: cef_initialize stalled" in text
             warning = b"Browser sources and docks" in text
-            if stalled and (release or warning):
+            if stalled and ((release and not wait_for_warning) or warning):
                 break
         assert stalled, f"{name}: interposition never reached"
         if release:
             os.write(write_fd, b"\n")
-        else:
-            assert warning, f"{name}: stalled CEF remained silent for 30 seconds"
         if after_init:
             assert b"result=1" in text, "real CEF initialization must succeed"
             helpers = descendants(process.pid)
@@ -109,7 +115,12 @@ def run_case(args, shim, output, name, after_init=False, release=False):
         text = b"".join(evidence)
         assert b"browser startup and immediate shutdown completed" in text, text.decode(errors="replace")
         if not release:
+            assert warning, f"{name}: stalled CEF remained silent for 30 seconds"
             assert b"CEF initialization timed out during shutdown" in text, text.decode(errors="replace")
+        else:
+            assert b"CEF initialization timed out during shutdown" not in text, text.decode(errors="replace")
+        if warning:
+            assert text.count(b"Browser sources and docks") == 1, "warning must appear once"
         with selectors.DefaultSelector() as exited:
             for fd in helper_fds:
                 exited.register(fd, selectors.EVENT_READ)
@@ -132,11 +143,22 @@ def run_case(args, shim, output, name, after_init=False, release=False):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    for name in ["executable", "module", "data", "output-dir"]:
+    for name in ["module", "data", "output-dir"]:
         parser.add_argument("--" + name, type=Path, required=True)
+    parser.add_argument("--include-dir", type=Path, action="append", required=True)
+    parser.add_argument("--library-dir", type=Path, action="append", required=True)
     parser.add_argument("--compiler", default="cc")
     args = parser.parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
+    args.executable = args.output_dir.resolve() / "startup-finalization"
+    command = [args.compiler, "-DHAVE_OBSCONFIG_H"]
+    for directory in args.include_dir:
+        command.append("-I" + str(directory.resolve()))
+    command.append(str(Path(__file__).with_name("startup-finalization.c").resolve()))
+    for directory in args.library_dir:
+        command.extend(["-L" + str(directory.resolve()), "-Wl,-rpath," + str(directory.resolve())])
+    command.extend(["-lobs", "-ldl", "-o", str(args.executable)])
+    subprocess.run(command, check=True)
     with tempfile.TemporaryDirectory(prefix="stalled-cef-", dir=args.output_dir) as scratch:
         output = Path(scratch).resolve()
         source = output / "stall.c"
@@ -144,9 +166,11 @@ def main():
         shim = output / "stall.so"
         subprocess.run([args.compiler, "-shared", "-fPIC", str(source), "-ldl", "-o", str(shim)], check=True)
         # Keep logs outside the scratch directory even when a case fails.
-        for name, after, release in [("slow", False, True), ("stalled", False, False),
-                                      ("stalled-with-helpers", True, False)]:
-            run_case(args, shim, args.output_dir.resolve(), name, after, release)
+        for name, after, release, wait in [("slow", False, True, False),
+                                           ("stalled", False, False, False),
+                                           ("stalled-with-helpers", True, False, False),
+                                           ("slow-after-warning", False, True, True)]:
+            run_case(args, shim, args.output_dir.resolve(), name, after, release, wait)
 
 
 if __name__ == "__main__":
