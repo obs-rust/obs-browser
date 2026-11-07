@@ -27,6 +27,11 @@
 #include <sstream>
 #include <thread>
 #include <mutex>
+#if defined(__linux__) && !defined(ENABLE_BROWSER_QT_LOOP)
+#include <cstdio>
+#include <cstdlib>
+#include "browser-startup.hpp"
+#endif
 #include <nlohmann/json.hpp>
 #include <obs-websocket-api.h>
 
@@ -81,6 +86,36 @@ static bool manager_initialized = false;
 os_event_t *cef_started_event = nullptr;
 static os_event_t *cef_initialized_event = nullptr;
 static bool browser_initialized = false;
+
+#if defined(__linux__) && !defined(ENABLE_BROWSER_QT_LOOP)
+static BrowserStartup *browser_startup = nullptr;
+static bool process_finalizer_prepared = false;
+static std::string cef_startup_version;
+
+static void WarnBrowserStartup(const char *reason)
+{
+	blog(LOG_ERROR,
+	     "[obs-browser]: CEF %s %s. Browser sources and docks are unavailable until CEF starts. "
+	     "Check the installed CEF runtime and the browser debug.log.",
+	     cef_startup_version.c_str(), reason);
+}
+
+// A host that prepares this hook calls finish only after all normal application
+// cleanup, before returning from main. No atexit ordering can provide that
+// guarantee while CefInitialize can still register destructors on another thread.
+extern "C" EXPORT void obs_browser_prepare_shutdown(void)
+{
+	process_finalizer_prepared = true;
+}
+
+extern "C" EXPORT void obs_browser_finish_shutdown(void)
+{
+	if (browser_startup && browser_startup->IsAbandoned()) {
+		std::fflush(nullptr);
+		std::_Exit(EXIT_SUCCESS);
+	}
+}
+#endif
 
 #if defined(_WIN32)
 static int adapterCount = 0;
@@ -454,22 +489,39 @@ static bool BrowserInit(void)
 
 #if !defined(_WIN32)
 	BackupSignalHandlers();
+#endif
 	bool success = CefInitialize(args, settings, app, nullptr);
-	RestoreSignalHandlers();
-#else
-	bool success = CefInitialize(args, settings, app, nullptr);
+	auto finish_initialize = [&](bool warned) {
+		(void)warned;
+#if !defined(_WIN32)
+		RestoreSignalHandlers();
 #endif
 
-	if (!success) {
+		if (!success) {
 #if CHROME_VERSION_BUILD >= 6367
-		blog(LOG_ERROR, "[obs-browser]: CEF failed to initialize. Exit code: %d", CefGetExitCode());
+			blog(LOG_ERROR, "[obs-browser]: CEF failed to initialize. Exit code: %d", CefGetExitCode());
 #else
-		blog(LOG_ERROR, "[obs-browser]: CEF failed to initialize.");
+			blog(LOG_ERROR, "[obs-browser]: CEF failed to initialize.");
 #endif
-		app = nullptr;
-		return false;
-	}
-	return true;
+#if defined(__linux__) && !defined(ENABLE_BROWSER_QT_LOOP)
+			if (!warned)
+				WarnBrowserStartup("failed to initialize");
+#endif
+			app = nullptr;
+		}
+#if defined(__linux__) && !defined(ENABLE_BROWSER_QT_LOOP)
+		browser_initialized = success;
+		os_event_signal(cef_initialized_event);
+#endif
+		return success;
+	};
+#if defined(__linux__) && !defined(ENABLE_BROWSER_QT_LOOP)
+	// Complete parks a late result before it can touch OBS or restore signal
+	// handlers after unload. The events and all CEF state stay alive at timeout.
+	return browser_startup->Complete(finish_initialize);
+#else
+	return finish_initialize(false);
+#endif
 }
 
 static void BrowserShutdown(void)
@@ -488,9 +540,14 @@ static void BrowserShutdown(void)
 #ifndef ENABLE_BROWSER_QT_LOOP
 static void BrowserManagerThread(void)
 {
+#if defined(__linux__)
+	const bool initialized = BrowserInit();
+#else
 	browser_initialized = BrowserInit();
 	os_event_signal(cef_initialized_event);
-	if (browser_initialized) {
+	const bool initialized = browser_initialized;
+#endif
+	if (initialized) {
 		CefRunMessageLoop();
 		BrowserShutdown();
 	}
@@ -511,6 +568,13 @@ extern "C" EXPORT void obs_browser_initialize(void)
 			browser_initialized = false;
 		}
 #else
+#if defined(__linux__)
+		cef_startup_version = std::to_string(cef_version_info(0)) + "." + std::to_string(cef_version_info(1)) +
+				      "." + std::to_string(cef_version_info(2));
+		browser_startup = new BrowserStartup;
+		browser_startup->Watch(std::chrono::seconds(10),
+				       [] { WarnBrowserStartup("initialization has not completed after 10 seconds"); });
+#endif
 		manager_thread = thread(BrowserManagerThread);
 #endif
 	}
@@ -925,6 +989,12 @@ static void MigrateToChromeRuntime()
 
 bool obs_module_load(void)
 {
+#if defined(__linux__) && !defined(ENABLE_BROWSER_QT_LOOP)
+	if (browser_startup && browser_startup->IsAbandoned()) {
+		blog(LOG_ERROR, "[obs-browser]: Cannot reload abandoned CEF; OBS must exit first");
+		return false;
+	}
+#endif
 #if CHROME_VERSION_BUILD > 6533
 	MigrateToChromeRuntime();
 #endif
@@ -1012,7 +1082,25 @@ void obs_module_unload(void)
 		// Initialization can finish before the context-ready callback runs.
 		// Wait for success or failure before using the CEF API; the quit task
 		// must also be accepted while the context is still starting.
+#if defined(__linux__)
+		if (!browser_startup->WaitForShutdown(std::chrono::seconds(5))) {
+			blog(LOG_ERROR,
+			     "[obs-browser]: CEF initialization timed out during shutdown (CEF %s, 5 seconds). "
+			     "Retaining the blocked thread and its events; OBS will finish cleanup and exit "
+			     "without running CEF destructors.",
+			     cef_startup_version.c_str());
+			if (!process_finalizer_prepared) {
+				blog(LOG_ERROR,
+				     "[obs-browser]: Host has no final process-shutdown hook; exiting immediately "
+				     "to avoid a join hang or destroying state still used by CEF.");
+				std::fflush(nullptr);
+				std::_Exit(EXIT_SUCCESS);
+			}
+			return;
+		}
+#else
 		os_event_wait(cef_initialized_event);
+#endif
 		if (browser_initialized && !CefPostTask(TID_UI, new BrowserTask([]() { CefQuitMessageLoop(); }))) {
 			blog(LOG_DEBUG, "[obs-browser]: Failed to post CefQuit task to loop");
 		}
@@ -1027,4 +1115,8 @@ void obs_module_unload(void)
 	cef_initialized_event = nullptr;
 	browser_initialized = false;
 	manager_initialized = false;
+#if defined(__linux__) && !defined(ENABLE_BROWSER_QT_LOOP)
+	delete browser_startup;
+	browser_startup = nullptr;
+#endif
 }

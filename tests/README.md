@@ -36,6 +36,47 @@ covers real successful initialization concurrent with unload. It does not
 inject a CEF initialization failure or prove absence of leaks, and it does not
 replace full frontend/rendering tests.
 
+## Stalled initialization and final process exit
+
+`startup_state.py --output-dir <fresh-dir>` compiles the production handshake
+without CEF or OBS. It repeats success, failure, warning followed by recovery,
+and an initializer returning after abandonment 100 times. An abandoned result
+must remain parked before touching OBS state.
+
+`stalled_initialization.py` uses the same include/library/module/data arguments
+as `startup_shutdown.py`. Run it under Xvfb with the staged CEF runtime. It
+compiles a new lifecycle fixture and an LD_PRELOAD shim for `cef_initialize`.
+Cases cover a released slow start, a start that never returns, a start blocked
+after real CEF has spawned helpers, and recovery after the startup warning.
+The test observes helper exits through pidfds and uses a static-destructor
+sentinel to reject a normal exit while CEF is blocked. Each output directory
+must be fresh; the case logs remain there on failure.
+
+On Linux without the Qt CEF loop, startup logs one warning after 10 seconds,
+including the runtime CEF version. This warning allows later recovery. Unload
+allows another 5 seconds for initialization to finish; success or failure in
+that interval retains the normal quit/join path. At timeout, no CEF quit task
+is posted and no join occurs. The initializer, events and CEF objects remain
+alive, and a late initializer is parked before restoring signal handlers or
+accessing OBS. This is intentional retention until process termination.
+
+The obs-studio frontend calls the private `obs_browser_prepare_shutdown` hook
+after loading the module and `obs_browser_finish_shutdown` after normal OBS,
+Qt and platform cleanup, with the application log flushed. Only an abandoned
+initialization makes the final hook call `_Exit(0)`, terminating the blocked
+thread without running static CEF destructors. Closing the parent process's
+CEF IPC descriptors must also terminate its helpers; the real-runtime test
+checks that rather than assuming it. Libobs intentionally keeps module
+libraries loaded after unload, so the retained thread and final hook keep
+their code mapped.
+
+A host that does not install this finalization handshake cannot safely
+continue normal unload after a timeout. The plugin logs that limitation and
+calls `_Exit(0)` immediately in that exceptional case, skipping remaining
+application cleanup. Normal startup/shutdown on such hosts is unchanged.
+This does not cancel `CefInitialize`, make a stalled runtime functional, or
+establish support for any particular CEF version.
+
 ## Real initialization failure
 
 After compiling the lifecycle harness above, run the Linux CEF singleton case:
